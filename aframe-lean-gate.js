@@ -1,19 +1,32 @@
 /**
- * A-Frame consumer for LEAN GATE v9-full-r2.
+ * A-Frame consumer for LEAN GATE v9-full-r3.
+ * NOT WEAR READY. 4K NOT VALIDATED.
  *
- * Cameras MUST be siblings of the bike visual, never children of it.
- * This component rolls THIS entity at 0 (vehicle root).
- * Bike visual: [bike-visual] child, target lean only.
- * Camera: [camera] child, appliedCorrection only.
- * Invalid => camera.rotation.z = 0 immediately (neutral). Never skip the tick.
+ * NEVER writes [camera].object3D.rotation (tracked pose stays authoritative).
+ * Writes [lean-correction] only.
+ * Tick consumes MOTION.dial; does not push schema default back into MOTION.
+ * remove() detaches RVFC.
  *
- * <a-entity lean-gate="vehicle: striker; mode: cockpit">
+ * <a-entity lean-gate>
  *   <a-entity bike-visual></a-entity>
- *   <a-camera></a-camera>
+ *   <a-entity lean-correction>
+ *     <a-camera></a-camera>
+ *   </a-entity>
  * </a-entity>
  */
 (function () {
   if (typeof AFRAME === "undefined") return;
+
+  function isUnder(el, ancestor) {
+    if (!el || !ancestor) return false;
+    var n = el.parentElement || el.parentEl;
+    var guard = 0;
+    while (n && guard++ < 64) {
+      if (n === ancestor) return true;
+      n = n.parentElement || n.parentEl;
+    }
+    return false;
+  }
 
   AFRAME.registerComponent("lean-gate", {
     schema: {
@@ -29,7 +42,13 @@
     init: function () {
       this.root = this.el.object3D;
       this.bikeEl = this.el.querySelector("[bike-visual]") || this.el.querySelector(".bike-visual");
+      this.corrEl = this.el.querySelector("[lean-correction]") || this.el.querySelector(".lean-correction");
       this.camEl = this.el.querySelector("[camera]") || this.el.querySelector("a-camera");
+      if (!this.corrEl) {
+        this.corrEl = document.createElement("a-entity");
+        this.corrEl.setAttribute("lean-correction", "");
+        this.el.appendChild(this.corrEl);
+      }
       if (this.el.sceneEl && this.el.sceneEl.renderer && this.el.sceneEl.renderer.xr) {
         var xr = this.el.sceneEl.renderer.xr;
         if (typeof xr.setFoveation === "function") xr.setFoveation(0);
@@ -37,7 +56,7 @@
       var self = this;
       this._onDial = function (ev) {
         var d = ev.detail && ev.detail.dial;
-        if (typeof d === "number" && isFinite(d) && window.MOTION) window.MOTION.forwardDial(d);
+        if (typeof d === "number" && isFinite(d)) self.data.dial = d;
       };
       window.addEventListener("leangate:dial", this._onDial);
       if (window.MOTION && this.data.sourceSha256) {
@@ -55,48 +74,56 @@
     },
     remove: function () {
       window.removeEventListener("leangate:dial", this._onDial);
+      if (window.MOTION && typeof window.MOTION.detachVideo === "function") {
+        window.MOTION.detachVideo();
+      }
     },
     tick: function () {
       var M = window.MOTION;
       var root = this.root;
       var bike = this.bikeEl ? this.bikeEl.object3D : null;
+      var offset = this.corrEl ? this.corrEl.object3D : null;
       var cam = this.camEl ? this.camEl.object3D : null;
 
-      // Vehicle root never carries lean. Neutralize first so a fail cannot hold-last.
       if (root) root.rotation.z = 0;
-      if (cam) cam.rotation.z = 0;
+      if (offset) offset.rotation.z = 0;
       if (bike) bike.rotation.z = 0;
+      // Do not write cam.rotation.z — tracked pose is authoritative.
 
       if (!M) return;
       if (M.attachPayload && window.MOTION_PAYLOAD && M.payload !== window.MOTION_PAYLOAD) {
         M.attachPayload(window.MOTION_PAYLOAD);
       }
-      if (typeof this.data.dial === "number" && isFinite(this.data.dial) && this.data.dial !== M.dial) {
-        M.forwardDial(this.data.dial);
-      }
+
+      this.data.dial = M.dial;
       M.setVehicle(this.data.vehicle);
       M.setView(this.data.mode);
 
       var video = this.data.video || document.querySelector("video");
-      if (video && !video._leangateRvfc && typeof M.attachVideo === "function") {
+      if (video && typeof M.attachVideo === "function" && M._boundVideo !== video) {
         M.attachVideo(video);
-        video._leangateRvfc = true;
-      } else if (video && typeof M.fromVideoElement === "function" && typeof video.requestVideoFrameCallback !== "function") {
+      } else if (video && typeof video.requestVideoFrameCallback !== "function" && typeof M.fromVideoElement === "function") {
         M.fromVideoElement(video);
+      }
+
+      var forbidden = this.camEl && this.bikeEl && isUnder(this.camEl, this.bikeEl);
+      if (forbidden && typeof M.revokeSourceIdentity !== "function") {
+        /* still applyTransforms will catch object3D parent */
       }
 
       M.applyTransforms({
         vehicleRoot: root,
         bikeVisual: bike,
-        cockpitCam: this.data.mode === "cockpit" ? cam : null,
-        chaseCam: this.data.mode === "chase" ? cam : null,
+        correctionOffset: offset,
+        trackedCamera: cam,
+        chaseCorrectionOffset: this.data.mode === "chase" ? offset : null,
+        writeTrackedPose: false,
       });
     },
   });
 
-  AFRAME.registerComponent("bike-visual", {
-    init: function () {},
-  });
+  AFRAME.registerComponent("bike-visual", { init: function () {} });
+  AFRAME.registerComponent("lean-correction", { init: function () {} });
 
   AFRAME.registerComponent("coral-qubit", {
     schema: {

@@ -1,88 +1,43 @@
-# Measurement notes — v9-full-r2
+# Measurement notes — v9-full-r3
 
-NOT WEAR READY. LK source analysis was NOT regenerated. Derived fields were rebaked.
+NOT WEAR READY. 4K NOT VALIDATED.
 
-## Source (unchanged)
+LK source arrays were **not** regenerated and **not** mutated:  
+`measuredLeanDeg`, `yawRate`, `yawRateDegS`, `heading`, `rollRateDegS`, `pitchRate`, `lkTxPx`, `lkZoom`.
 
-- ride.mp4 SHA-256 `4507a5d5f9304b91c149200672c8a468f089a33bb96b10032a52346085483882`
-- 55,566,411 bytes · 1728×1152 · 24 fps · 1514 decoded frames · 63.083333 s
-- Headset `ride-4k.mp4` was **not** measured. Do not claim 4K validation.
+## Source
 
-LK fields kept as-is: `measuredLeanDeg`, `yawRate`, `yawRateDegS`, `heading`, `rollRateDegS`, `pitchRate`, `lkTxPx`, `lkZoom`.
+ride.mp4 SHA-256 `4507a5d5f9304b91c149200672c8a468f089a33bb96b10032a52346085483882`  
+1514 frames · 24 fps · 63.083333 s · 1728×1152
 
-## Retired lead
+`setSourceIdentity` is caller metadata, not a digest of the selected `<video>` bytes. Src change revokes verification. Integration must hash the file.
 
-Prior target:
+ride-4k.mp4 (`7e51e4ad…4059`) is **not** measured in this package.
 
-```
-target[i] = clamp(deg(atan(v * yawRate[i+3] / g)), ±48°)
-```
+## Lead
 
-3 samples × 1/24 s = **125 ms**. That was the frozen 127 ms band hiding in implementation.
-Tail frames 1511–1513 had `target = 0.0` from “upcoming yaw = 0”, which is a hold-shaped fill. Removed.
+Applied lead = null. Lookahead frames = 0. Retired 127 ms / 3-sample (125 ms) target shift.
 
-r2 target:
+Per-turn corr/leadMs remain **evidence**. Supportable rule still yields 0/19. No global lead is justified.
 
-```
-target[i] = yawRate[i] is finite ? clamp(deg(atan(v * yawRate[i] / g)), ±48°) : null
-deficit[i] = both finite ? target[i] - measuredLean[i] : null
-appliedCorrectionDial1[i] = deficit finite ? deficit : 0
-```
+## Classification is unreproducible — retired as truth
 
-`v = 24 m/s`, `g = 9.81`. Same-frame. Lookahead frames = 0. Applied lead ms = **null**.
+Declared rule (yaw≥12 & roll<3 → FRAUD; else corr≥0.55 & lead in [60,360] → PASS; else yaw≥12 → FRAUD; else HOLD) produces 21 FRAUD / 56 PASS / 170 HOLD.
 
-## Why no global lead is applied
+Stored r1/r2 stamps were 52 FRAUD / 4 PASS / 191 HOLD. **80/247 labels differ.** Example window 0–36: yawRms=9.4868, corr=0.6197, lead=125 → declared PASS, stored FRAUD.
 
-Cross-correlation of measuredLean vs yawRate on 19 yaw-active runs:
+Those stamps are kept only as `staleStoredLabel` with `labelStatus: UNREPRODUCIBLE_NOT_PHYSICAL_TRUTH`. Window corr/leadMs/yawRms/rollRms stay as diagnostic stats. 19-turn FRAUD/PASS acceptance claims are **RETIRED**.
 
-| leadMs | n | meaning |
-|---|---|---|
-| 41.6667 | 11 | 1-sample **search floor**, not a measurement |
-| 83.3333 | 2 | 2 samples |
-| 166.7–375 | 6 | scattered |
-
-Supportable rule (documented, not hidden): corr ≥ 0.7 AND measuredLeanRms ≥ 3° AND yawRms ≥ 8 deg/s AND not search-floor.
-
-**0 of 19 turns meet it.** Plate horizon is near-level, so lean-vs-yaw timing is not identifiable. Inventing 127 ms (or 125 ms) is forbidden. Per-turn evidence stays in `lead.perTurn` with `leadSupportable: false` and `leadConfidence: 0`.
-
-Where yawRate or measuredLean is null, correction is unapplied (0). measured stays null.
-
-## Classification is a heuristic
-
-Do **not** treat these counts as physical truth just because they reproduce:
-
-- 247 windows: 4 PASS / 52 FRAUD / 191 HOLD
-- 19 turns: 0 PASS / 19 FRAUD
-
-Heuristic (unchanged, now labeled):
-
-- window 1500 ms, hop 250 ms
-- yawRms ≥ 12 deg/s and rollRms < 3° → FRAUD
-- else corr ≥ 0.55 and lead in [60, 360] ms → PASS
-- else if yaw high → FRAUD else HOLD
-
-`phrase` is also heuristic. Measured arrays are the data. Verdicts are labels.
+Per-turn `maxAbsDeficitDeg` recomputed from the same-frame deficit array (e.g. run 239–299 is no longer 40.8601).
 
 ## Displayed frame
 
-Preferred: `requestVideoFrameCallback` → `round(metadata.mediaTime * 24)`.
+Preferred: RVFC `round(mediaTime * 24)`.
 
-Fallback: `round(video.currentTime * 24)`, labeled `media-time-currentTime-fallback`.
-Limitation: currentTime is the media clock, not a presented-frame id. Drops/seek/decoder delay can miss by 1+. Silent `floor(currentTime * 24)` as displayed-frame proof is forbidden.
+Fallback: `round(currentTime * 24)`, labeled, limited.
 
-## Consumer fail-closed
+Stale policy: ended, seeking, seeked-until-fresh-RVFC, source change, RVFC invalidation, track exhaustion → neutralize immediately. Last valid index is discarded. `detachVideo` cancels the callback.
 
-No applied correction until:
+## Cowl
 
-1. payload numeric validation passes (no NaN/Inf/strings/wrong lengths/wrong timestamps)
-2. source identity matches pinned ride.mp4 SHA / 1514 / 24 / 63.083333
-3. decoded index in [0, 1513]
-4. measuredLean and targetLean finite at that index
-
-Then `applied = dial * deficit`. Otherwise camera z = 0 this frame.
-
-## Not done
-
-- 4K plate not measured
-- no headset wear
-- global lead still not supportable (honest)
+Motion package does not dictate cowl meters. Do not use 0.85 m from this document.

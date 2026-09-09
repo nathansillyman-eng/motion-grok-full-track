@@ -1,6 +1,6 @@
-MOTION-GROK-FULL-TRACK r2
-NOT WEAR READY — Codex re-verifies before Claude.
-LK source analysis NOT regenerated. Derived target/deficit rebaked same-frame.
+MOTION-GROK-FULL-TRACK r3
+NOT WEAR READY. 4K NOT VALIDATED.
+LK source arrays NOT mutated. Consumer/metadata only.
 
 source ride.mp4 SHA-256:
 4507a5d5f9304b91c149200672c8a468f089a33bb96b10032a52346085483882
@@ -8,16 +8,16 @@ source frames: 1514
 source fps: 24
 source duration: 63.083333
 
-retiredFrozenLeadMs: 127
-retiredLookaheadFrames: 3 (=125 ms)
 appliedLeadMs: null
 globalLeadSupportable: false
 status: NOT_WEAR_READY
+fourKValidated: false
 
 contained files (SHA-256  bytes  name):
-57da2e928c9e242ab69a1c9513804cfc49f4b438079b24410df438ce3ab4f714  246589  v9-full.json
-ccfb6c82ed458793f03b06508a3c6d0b7dc077fe04135ca7adbcd6f4cc34085c  246924  v9-inline.js
-e81cfbd953b7153cf772d86fd42b65f2e644ef4491c155f5e41a2b376996d088  18882  hooks.js
-99c03e8ccf401bcd671c3fad4285964f35828313e583ebfe16c7f0f7cd7c9d0d  4253  aframe-lean-gate.js
-28d9bbbcccc9b6d25de03388be57e29250c3fd2e9c0649d46da263890b77395f  2564  TRANSFORM-CONTRACT.md
-830f9134025cd3d8bcc242147c4e79018afc6ee0fd94d16dcf77e7b4dd99cac5  3174  MEASUREMENT-NOTES.md
+910363ac5c6a967b7a453a8fc8d74c02b8df26ffaf6c38f4686b0aa1a5dd5683  260443  v9-full.json
+55f9fb6c9696a72567417ff96c08cef91297b63747bb5772aeb61d3630e9cc8e  260778  v9-inline.js
+875f00287d60183d0f9ee9546d5dca6c9dda90f4dd381ea6dea424fd076b763f  28055  hooks.js
+6b9a1ab33c35aa395b7393219804f5ddd80a8fb55c6d2b9f177f278cfe898d5c  5129  aframe-lean-gate.js
+24483cde57b904554e1bf7f6fa1959bda0d39102b5fb53b10226d143a661a618  2007  TRANSFORM-CONTRACT.md
+7c7bb442acbae326f64b100c8d7c6f3e57541a8c6d8234ad1b1c8d6b7ca82182  1971  MEASUREMENT-NOTES.md
+27b092b09609924db0fb3e30bc928fcd67ec2db93e7fd0bc979cb7481e56d63d  2181  R3-CHANGES.md

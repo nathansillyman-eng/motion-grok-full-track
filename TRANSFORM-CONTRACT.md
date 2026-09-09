@@ -1,74 +1,58 @@
-# Transform contract — v9-full-r2
+# Transform contract — v9-full-r3
 
-NOT WEAR READY. Codex re-verifies before Claude integrates.
+NOT WEAR READY. 4K NOT VALIDATED.
 
 ## Hierarchy (required)
 
 ```
-vehicleRoot          yaw + position only. rotation.z = 0 always.
-  bikeVisual         sibling of cameras. rotation.z = targetLeanRad. Plant = 0.
-  cockpitCam         sibling of bikeVisual. NEVER a child of bikeVisual.
-                     rotation.z = appliedCorrectionRad
-  chaseCam           not under bikeVisual. rotation.z = 0. up = (0,1,0)
-  cowl               on vehicleRoot, 0.85 m, world-locked, never head-locked
+vehicleRoot                 yaw + position. rotation.z = 0 always.
+  bikeVisual                sibling. rotation.z = targetLeanRad. Plant = 0.
+  correctionOffset          sibling of bikeVisual (or child of tracked camera).
+                            rotation.z = appliedCorrectionRad
+  trackedHeadsetCamera      NEVER written by this system.
+  chaseCorrectionOffset     rotation.z = 0. up = (0,1,0)
 ```
 
+Cowl placement is **not specified** by the motion package. Environment-owned.
+
 `appliedCorrectionRad = sourceVerified && sampleValid && view==cockpit && vehicle==striker
-                       ? dial * (targetLean - measuredLean) * π/180
+                       ? dial * deficitRad
                        : 0`
 
 ## Forbidden
 
-- Camera parented under the leaning body.
-- Applying body lean AND deficit on the same transform chain.
-- Skipping a tick when the sample is invalid (that retains previous roll).
-- Hold-last, wrap, modulo, stretch, 0-fill of measuredLean.
+- Camera or correctionOffset parented under bikeVisual → `HIERARCHY_FORBIDDEN`, correction 0.
+- Writing tracked headset `camera.rotation`.
+- Body lean + deficit on one chain (double roll).
+- Skipping a tick on invalid (hold-last). Write 0 this frame.
 - Frozen 127 ms / 3-frame lookahead.
-
-On invalid sample: write `rotation.z = 0` on the camera **this frame**. Neutral, not skipped.
+- Tick resetting dial to a schema default.
 
 ## World-space identities
-
-Let `worldRoll(obj)` be Euler YXZ Z from `obj.matrixWorld`.
 
 | node | worldRoll |
 |---|---|
 | vehicleRoot | 0 |
 | bikeVisual (striker, valid) | targetLeanRad |
-| cockpitCam (sibling, valid, dial D) | D * deficitRad |
-| cockpitCam if wrongly child of bike | targetLeanRad + D * deficitRad  ← FORBIDDEN |
-| chaseCam | 0 |
-| plant, any camera | 0 |
-| invalid sample, any camera | 0 |
+| correctionOffset (sibling, valid, dial D) | D * deficitRad |
+| correctionOffset if child of bike | target + D*deficit ← forbidden, rejected |
+| chase | 0 |
+| plant / invalid | 0 |
+| tracked headset camera | unchanged by this system |
 
-## Frame 258 demonstration (why 83° was a bug)
+Frame 258 dial 1, siblings: bike 40.459°, correction 39.1671°, chase 0°. Child-of-bike would be 79.6261° and is rejected.
 
-Prior package baked `target[258] = atan(v·ω[261]/g)` (3-frame lookahead) = 42.1519°.
-`measured[258] = 1.2919°`. `deficit = 40.8601°`.
-
-If cockpit camera is a child of the leaning body at dial 1:
-
-`worldRoll = 42.1519 + 40.8601 = 83.012°`
-
-That is body + correction. Illegal.
-
-r2 same-frame target at 258 = atan(v·ω[258]/g) ≈ 40.46°.
-Deficit ≈ 39.17°.
-Legal sibling cockpit world roll at dial 1 = **39.17°**, not 83°.
-
-`MOTION.selfTest()` asserts the sibling vs child-of-bike identities.
-
-## A-Frame markup
+## A-Frame
 
 ```html
-<a-entity lean-gate="vehicle: striker; mode: cockpit; sourceSha256: 4507a5d5f9304b91c149200672c8a468f089a33bb96b10032a52346085483882">
+<a-entity lean-gate>
   <a-entity bike-visual></a-entity>
-  <a-camera></a-camera>
+  <a-entity lean-correction>
+    <a-camera></a-camera>
+  </a-entity>
 </a-entity>
 ```
 
-No correction until `MOTION.setSourceIdentity` matches the pinned ride.mp4 SHA.
-
-## Three.js (this app)
-
-`player` (yaw) → `bodyLean` (visual) and `camLean` (cockpitCam) as siblings. Chase camera is unparented with `up = (0,1,0)`.
+`lean-gate` writes `[lean-correction]` only. It never assigns `[camera].object3D.rotation.z`.
+`remove()` calls `MOTION.detachVideo()` (cancels RVFC).
+Tick copies `MOTION.dial` into the component readout. It does not call `setDial` from the schema default.

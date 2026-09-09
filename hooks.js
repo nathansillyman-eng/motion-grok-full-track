@@ -1,16 +1,11 @@
 /**
- * LEAN GATE v9-full-r2 — cockpit consumer.
+ * LEAN GATE v9-full-r3 — cockpit consumer.
+ * NOT WEAR READY. 4K NOT VALIDATED.
  *
- * RETIRED: frozen 127 ms, 3-frame lookahead, hold-last, double roll.
- *
- * appliedCorrection = sourceVerified && sampleValid ? dial * (target - measured) : 0
- * Invalid/null/out-of-range/wrong-source => applied correction 0 immediately.
- * measuredLean stays null. Never coerce. Never hold-last.
- *
- * Hierarchy: vehicleRoot (no roll) -> bikeVisual (target lean) AND cameras as siblings.
- * Cockpit camera MUST NOT be a child of the leaning body.
- *
- * Script order: v9-inline.js THEN this file.
+ * selfTest never promotes production sourceIdentity.
+ * Invalid/stale displayed-frame evidence => applied correction 0 this frame.
+ * Tick consumes M.dial; it does not reset it.
+ * Writes correctionOffset only. Never writes tracked headset camera pose.
  */
 (function (root) {
   var EXPECTED = {
@@ -20,25 +15,37 @@
     durationSec: 63.083333,
   };
 
-  var REQUIRED_ARRAYS = [
-    "decodedFrame",
-    "videoTimestamp",
-    "yawRate",
-    "measuredLeanDeg",
-    "targetLeanDeg",
-    "deficitLeanDeg",
-    "deficitRollDeg",
-    "correctionValid",
-    "appliedCorrectionDial1Deg",
-    "phrase",
-  ];
+  var CONSUMER_ARRAYS = {
+    decodedFrame: { allowNull: false, kind: "index" },
+    videoTimestamp: { allowNull: false, kind: "timestamp" },
+    heading: { allowNull: true, kind: "number" },
+    yawRate: { allowNull: true, kind: "number" },
+    yawRateDegS: { allowNull: true, kind: "number" },
+    pitchRate: { allowNull: true, kind: "number" },
+    rollRateDegS: { allowNull: true, kind: "number" },
+    lkTxPx: { allowNull: true, kind: "number" },
+    lkZoom: { allowNull: true, kind: "number" },
+    measuredLeanDeg: { allowNull: true, kind: "number" },
+    targetLeanDeg: { allowNull: true, kind: "number" },
+    deficitLeanDeg: { allowNull: true, kind: "number" },
+    deficitRollDeg: { allowNull: true, kind: "number" },
+    cameraRollDial0: { allowNull: true, kind: "number" },
+    cameraRollDial1: { allowNull: true, kind: "number" },
+    appliedCorrectionDial1Deg: { allowNull: false, kind: "number" },
+    correctionValid: { allowNull: false, kind: "boolean" },
+    phrase: { allowNull: false, kind: "string" },
+  };
 
   var forwarding = false;
-  var lastI = 0;
+  var lastI = -1;
   var lastIndexSource = "none";
   var lastIndexLimitation = null;
   var rvfcHandle = null;
   var boundVideo = null;
+  var boundSrc = null;
+  var videoListeners = [];
+  var frameFresh = false;
+  var staleReason = null;
 
   function isFiniteNumber(x) {
     return typeof x === "number" && isFinite(x);
@@ -57,52 +64,108 @@
     var err = [];
     if (!p || typeof p !== "object") return ["missing payload"];
     if (p.sampleCount !== EXPECTED.decodedFrameCount) err.push("wrong sampleCount");
-    if (p.sampleRate !== EXPECTED.fps && p.sampleRate !== 24) err.push("wrong sampleRate");
+    if (p.sampleRate !== EXPECTED.fps) err.push("wrong sampleRate");
     if (p.sourceVideoSha256 !== EXPECTED.sha256) err.push("wrong sourceVideoSha256");
     if (p.leadApplied) err.push("leadApplied must be false");
     if (p.appliedLeadSamples) err.push("appliedLeadSamples must be 0");
     var n = p.sampleCount;
-    for (var a = 0; a < REQUIRED_ARRAYS.length; a++) {
-      var k = REQUIRED_ARRAYS[a];
-      if (!Array.isArray(p[k]) || p[k].length !== n) err.push("malformed " + k);
-    }
-    if (Array.isArray(p.videoTimestamp) && p.videoTimestamp.length === n) {
-      for (var i = 0; i < n; i++) {
-        var expect = i / EXPECTED.fps;
-        var got = p.videoTimestamp[i];
-        if (!isFiniteNumber(got) || Math.abs(got - expect) > 1e-4) {
-          err.push("wrong timestamps");
-          break;
-        }
+    if (typeof n !== "number" || n !== EXPECTED.decodedFrameCount) return err.length ? err : ["wrong sampleCount"];
+
+    Object.keys(CONSUMER_ARRAYS).forEach(function (k) {
+      var spec = CONSUMER_ARRAYS[k];
+      if (!Object.prototype.hasOwnProperty.call(p, k)) {
+        err.push("missing " + k);
+        return;
       }
-    }
-    function scan(arr, allowNull) {
-      if (!Array.isArray(arr)) return;
-      for (var i = 0; i < arr.length; i++) {
+      var arr = p[k];
+      if (!Array.isArray(arr) || arr.length !== n) {
+        err.push("malformed " + k);
+        return;
+      }
+      for (var i = 0; i < n; i++) {
         var v = arr[i];
-        if (v == null) {
-          if (!allowNull) {
-            err.push("null in required numeric");
+        if (v === null || v === undefined) {
+          if (!spec.allowNull) {
+            err.push("null in " + k);
             return;
           }
           continue;
         }
-        if (typeof v === "string") {
-          err.push("string in numeric field");
+        if (spec.kind === "boolean") {
+          if (v !== true && v !== false) {
+            err.push("malformed correctionValid");
+            return;
+          }
+          continue;
+        }
+        if (spec.kind === "string") {
+          if (typeof v !== "string") {
+            err.push("non-string phrase");
+            return;
+          }
+          continue;
+        }
+        if (typeof v === "boolean") {
+          err.push("boolean in " + k);
           return;
         }
-        if (typeof v === "number" && !isFinite(v)) {
-          err.push("NaN/Infinity");
+        if (typeof v === "string") {
+          err.push("string in " + k);
+          return;
+        }
+        if (typeof v !== "number" || !isFinite(v)) {
+          err.push("NaN/Infinity in " + k);
+          return;
+        }
+        if (spec.kind === "index" && v !== i) {
+          err.push("wrong decoded indices");
           return;
         }
       }
+    });
+
+    if (Array.isArray(p.videoTimestamp) && p.videoTimestamp.length === n) {
+      var prev = -Infinity;
+      for (var i = 0; i < n; i++) {
+        var ts = p.videoTimestamp[i];
+        if (!isFiniteNumber(ts)) {
+          err.push("wrong timestamps");
+          break;
+        }
+        if (ts <= prev) {
+          err.push("non-monotonic timestamps");
+          break;
+        }
+        if (Math.abs(ts - i / EXPECTED.fps) > 1e-4) {
+          err.push("wrong timestamps");
+          break;
+        }
+        prev = ts;
+      }
     }
-    scan(p.videoTimestamp, false);
-    scan(p.decodedFrame, false);
-    scan(p.yawRate, true);
-    scan(p.measuredLeanDeg, true);
-    scan(p.targetLeanDeg, true);
-    scan(p.deficitLeanDeg, true);
+
+    if (
+      Array.isArray(p.measuredLeanDeg) &&
+      Array.isArray(p.targetLeanDeg) &&
+      Array.isArray(p.deficitLeanDeg) &&
+      p.measuredLeanDeg.length === n
+    ) {
+      for (var j = 0; j < n; j++) {
+        var m = p.measuredLeanDeg[j];
+        var t = p.targetLeanDeg[j];
+        var d = p.deficitLeanDeg[j];
+        if (isFiniteNumber(m) && isFiniteNumber(t)) {
+          if (!isFiniteNumber(d) || Math.abs(d - (t - m)) > 1e-6) {
+            err.push("deficit inequality");
+            break;
+          }
+          if (Array.isArray(p.deficitRollDeg) && Math.abs(p.deficitRollDeg[j] - d) > 1e-6) {
+            err.push("deficitRoll mismatch");
+            break;
+          }
+        }
+      }
+    }
     return err;
   }
 
@@ -126,9 +189,9 @@
       status: "FAIL_CLOSED",
       indexSource: "none",
       indexLimitation: null,
-      apply: function (cam) {
-        if (!cam || !cam.rotation) return;
-        cam.rotation.z = cockpit.appliedCorrectionRad;
+      apply: function (offset) {
+        if (!offset || !offset.rotation) return;
+        offset.rotation.z = cockpit.appliedCorrectionRad;
       },
     };
   }
@@ -168,6 +231,14 @@
     cockpit.status = "FAIL_CLOSED";
     cockpit.phrase = "fail_closed";
     cockpit.reason = reason || "fail_closed";
+    cockpit.dial = M.dial;
+    cockpit.swing = M.dial;
+    cockpit.vehicle = M.vehicle;
+    cockpit.view = M.view;
+    cockpit.leadMs = null;
+    cockpit.leadApplied = false;
+    cockpit.indexSource = lastIndexSource;
+    cockpit.indexLimitation = lastIndexLimitation;
     emit();
   }
 
@@ -222,9 +293,10 @@
   }
 
   var M = root.MOTION || {};
-  M.version = "v9-full-r2";
+  M.version = "v9-full-r3";
   M.frozen = false;
   M.wearReady = false;
+  M.fourKValidated = false;
   M.payload = getPayload();
   M.dial = 0.7;
   M.vehicle = "striker";
@@ -269,10 +341,17 @@
       Math.abs(Number(sourceIdentity.durationSec) - EXPECTED.durationSec) < 1e-3;
     sourceIdentity.verified = !!ok;
     sourceIdentity.reason = ok
-      ? "verified ride.mp4"
+      ? "verified ride.mp4 metadata (not a digest of selected element bytes)"
       : "source identity mismatch — correction unapplied";
     M.sourceIdentity = sourceIdentity;
     if (!ok) neutralize(sourceIdentity.reason);
+    return sourceIdentity;
+  };
+
+  M.revokeSourceIdentity = function (reason) {
+    sourceIdentity.verified = false;
+    sourceIdentity.reason = reason || "revoked";
+    neutralize(sourceIdentity.reason);
     return sourceIdentity;
   };
 
@@ -289,7 +368,13 @@
     }
     v = v < 0 ? 0 : v > 1 ? 1 : v;
     M.dial = v;
-    M.sample(lastI);
+    cockpit.dial = v;
+    cockpit.swing = v;
+    if (lastI >= 0 && frameFresh) M.sample(lastI);
+    else {
+      cockpit.dial = v;
+      emit();
+    }
     if (root.__leanGate && typeof root.__leanGate.setDial === "function") {
       try {
         root.__leanGate.setDial(v);
@@ -304,18 +389,18 @@
   M.setVehicle = function (id) {
     M.vehicle = id === "plant" ? "plant" : "striker";
     cockpit.vehicle = M.vehicle;
-    M.sample(lastI);
+    if (lastI >= 0 && frameFresh) M.sample(lastI);
     return M.vehicle;
   };
   M.setView = function (v) {
     M.view = v === "chase" ? "chase" : "cockpit";
     cockpit.view = M.view;
-    M.sample(lastI);
+    if (lastI >= 0 && frameFresh) M.sample(lastI);
     return M.view;
   };
 
   function failFrame(i, reason) {
-    lastI = i;
+    lastI = typeof i === "number" ? i : -1;
     neutralize(reason);
     return {
       status: "FAIL_CLOSED",
@@ -332,32 +417,29 @@
     };
   }
 
-  M.sample = function (decodedFrame) {
-    var payload = getPayload();
-    M.payload = payload;
+  function sampleWith(payload, identity, decodedFrame, dial, vehicle, view) {
     var err = payloadErrors(payload);
-    if (err.length) return failFrame(decodedFrame, "payload invalid: " + err.join("; "));
-    if (!sourceIdentity.verified) return failFrame(decodedFrame, "source identity not verified");
+    if (err.length) return { status: "FAIL_CLOSED", reason: "payload invalid: " + err.join("; "), appliedCorrectionDeg: 0, i: decodedFrame };
+    if (!identity || !identity.verified) return { status: "FAIL_CLOSED", reason: "source identity not verified", appliedCorrectionDeg: 0, i: decodedFrame };
     if (!isFiniteNumber(decodedFrame) || decodedFrame !== Math.round(decodedFrame)) {
-      return failFrame(decodedFrame, "decodedFrame not an integer");
+      return { status: "FAIL_CLOSED", reason: "decodedFrame not an integer", appliedCorrectionDeg: 0, i: decodedFrame };
     }
     var n = payload.sampleCount;
     if (decodedFrame < 0 || decodedFrame >= n) {
-      return failFrame(decodedFrame, "out of range — no hold-last, no wrap");
+      return { status: "FAIL_CLOSED", reason: "out of range — no hold-last, no wrap", appliedCorrectionDeg: 0, i: decodedFrame };
     }
-    lastI = decodedFrame;
     var measured = payload.measuredLeanDeg[decodedFrame];
     var target = payload.targetLeanDeg[decodedFrame];
-    var flagged = payload.correctionValid ? payload.correctionValid[decodedFrame] : null;
-    if (measured == null || target == null || flagged === false) {
-      return failFrame(decodedFrame, "unmeasurable sample");
+    var flagged = payload.correctionValid[decodedFrame];
+    if (measured == null || target == null || flagged !== true) {
+      return { status: "FAIL_CLOSED", reason: "unmeasurable sample", appliedCorrectionDeg: 0, i: decodedFrame, measuredLeanDeg: measured == null ? null : measured, targetLeanDeg: target == null ? null : target };
     }
     if (!isFiniteNumber(measured) || !isFiniteNumber(target)) {
-      return failFrame(decodedFrame, "non-numeric measurement");
+      return { status: "FAIL_CLOSED", reason: "non-numeric measurement", appliedCorrectionDeg: 0, i: decodedFrame };
     }
     var deficit = target - measured;
-    if (!isFiniteNumber(deficit)) return failFrame(decodedFrame, "non-numeric deficit");
-    writeApplied(deficit, target, payload.phrase ? payload.phrase[decodedFrame] : "straight");
+    if (!isFiniteNumber(deficit)) return { status: "FAIL_CLOSED", reason: "non-numeric deficit", appliedCorrectionDeg: 0, i: decodedFrame };
+    var corr = vehicle === "plant" || view === "chase" ? 0 : dial * deficit;
     return {
       status: "OK",
       i: decodedFrame,
@@ -368,34 +450,93 @@
       targetLeanDeg: target,
       deficitLeanDeg: deficit,
       deficitRollDeg: deficit,
-      appliedCorrectionDeg: cockpit.appliedCorrectionDeg,
-      cameraRollDeg: cockpit.appliedCorrectionDeg,
-      phrase: cockpit.phrase,
-      indexSource: lastIndexSource,
-      indexLimitation: lastIndexLimitation,
+      appliedCorrectionDeg: corr,
+      cameraRollDeg: corr,
+      phrase: payload.phrase[decodedFrame],
     };
+  }
+
+  M.sample = function (decodedFrame) {
+    var payload = getPayload();
+    M.payload = payload;
+    var f = sampleWith(payload, sourceIdentity, decodedFrame, M.dial, M.vehicle, M.view);
+    if (f.status !== "OK") {
+      lastI = typeof decodedFrame === "number" ? decodedFrame : -1;
+      lastIndexSource = lastIndexSource || "decoded-frame-index";
+      neutralize(f.reason);
+      f.indexSource = lastIndexSource;
+      f.indexLimitation = lastIndexLimitation;
+      return f;
+    }
+    lastI = decodedFrame;
+    frameFresh = true;
+    staleReason = null;
+    writeApplied(f.deficitLeanDeg, f.targetLeanDeg, f.phrase);
+    f.appliedCorrectionDeg = cockpit.appliedCorrectionDeg;
+    f.cameraRollDeg = cockpit.appliedCorrectionDeg;
+    f.indexSource = lastIndexSource;
+    f.indexLimitation = lastIndexLimitation;
+    return f;
   };
 
   M.setDecodedFrame = function (i) {
     lastIndexSource = "decoded-frame-index";
     lastIndexLimitation = null;
+    frameFresh = true;
     return M.sample(i);
   };
 
-  M.fromPresentedFrame = function (meta) {
+  function videoIsStale(video) {
+    if (!video) return "no video";
+    if (video.ended) return "ended";
+    if (video.seeking) return "seeking";
+    if (typeof video.currentTime === "number" && video.duration && isFinite(video.duration) && video.currentTime >= video.duration - 1e-6) {
+      return "track exhaustion";
+    }
+    return null;
+  }
+
+  M.fromPresentedFrame = function (meta, video) {
     var payload = getPayload();
     if (!payload) return failFrame(null, "no payload");
+    var stale = videoIsStale(video || boundVideo);
+    if (stale) {
+      frameFresh = false;
+      staleReason = stale;
+      lastI = -1;
+      return failFrame(-1, stale);
+    }
     if (!meta || !isFiniteNumber(meta.mediaTime)) {
+      frameFresh = false;
       return failFrame(null, "rvfc metadata.mediaTime missing");
+    }
+    var i = Math.round(meta.mediaTime * payload.sampleRate);
+    if (i < 0 || i >= payload.sampleCount) {
+      frameFresh = false;
+      staleReason = "track exhaustion";
+      lastI = -1;
+      return failFrame(i, "track exhaustion");
     }
     lastIndexSource = "rvfc-mediaTime";
     lastIndexLimitation = null;
-    var i = Math.round(meta.mediaTime * payload.sampleRate);
+    frameFresh = true;
+    staleReason = null;
     return M.sample(i);
   };
 
   M.fromVideoElement = function (video) {
     if (!video) return failFrame(null, "no video");
+    var stale = videoIsStale(video);
+    if (stale) {
+      frameFresh = false;
+      staleReason = stale;
+      lastI = -1;
+      return failFrame(-1, stale);
+    }
+    if (!frameFresh && typeof video.requestVideoFrameCallback === "function") {
+      lastI = -1;
+      return failFrame(-1, staleReason || "stale RVFC — waiting for fresh presented frame");
+    }
     var payload = getPayload();
     if (!payload) return failFrame(null, "no payload");
     lastIndexSource = "media-time-currentTime-fallback";
@@ -403,25 +544,84 @@
       "HTMLMediaElement.currentTime is the media clock, not a presented-frame id. Dropped frames, decoder delay, or seek can disagree with the displayed frame by 1+. Do not treat this as proof of displayed-frame alignment.";
     if (!isFiniteNumber(video.currentTime)) return failFrame(null, "currentTime not numeric");
     var i = Math.round(video.currentTime * payload.sampleRate);
+    if (i < 0 || i >= payload.sampleCount) {
+      lastI = -1;
+      return failFrame(i, "track exhaustion");
+    }
+    frameFresh = true;
     return M.sample(i);
   };
 
-  M.attachVideo = function (video) {
+  function onVideoEvent(kind) {
+    return function () {
+      if (kind === "ended" || kind === "seeking" || kind === "emptied" || kind === "abort" || kind === "error" || kind === "loadstart") {
+        frameFresh = false;
+        staleReason = kind;
+        lastI = -1;
+        if (kind === "emptied" || kind === "loadstart" || kind === "abort") {
+          var src = boundVideo && (boundVideo.currentSrc || boundVideo.src);
+          if (src !== boundSrc) {
+            boundSrc = src;
+            M.revokeSourceIdentity("source change");
+            return;
+          }
+        }
+        neutralize(kind);
+      }
+      if (kind === "seeked") {
+        frameFresh = false;
+        staleReason = "seeked-until-fresh-frame";
+        lastI = -1;
+        neutralize("seeked-until-fresh-frame");
+      }
+    };
+  }
+
+  M.detachVideo = function () {
     if (boundVideo && rvfcHandle != null && boundVideo.cancelVideoFrameCallback) {
       try {
         boundVideo.cancelVideoFrameCallback(rvfcHandle);
       } catch (e) {}
     }
-    boundVideo = video || null;
+    for (var i = 0; i < videoListeners.length; i++) {
+      var rec = videoListeners[i];
+      try {
+        rec.el.removeEventListener(rec.type, rec.fn);
+      } catch (e) {}
+    }
+    videoListeners = [];
+    boundVideo = null;
+    M._boundVideo = null;
+    boundSrc = null;
     rvfcHandle = null;
+    frameFresh = false;
+    lastI = -1;
+    neutralize("video detached");
+    return M;
+  };
+
+  M.attachVideo = function (video) {
+    M.detachVideo();
+    boundVideo = video || null;
+    M._boundVideo = boundVideo;
+    rvfcHandle = null;
+    frameFresh = false;
     if (!video) return M;
+    boundSrc = video.currentSrc || video.src || null;
+    ["ended", "seeking", "seeked", "emptied", "abort", "error", "loadstart"].forEach(function (type) {
+      var fn = onVideoEvent(type);
+      video.addEventListener(type, fn);
+      videoListeners.push({ el: video, type: type, fn: fn });
+    });
     if (typeof video.requestVideoFrameCallback === "function") {
       var onFrame = function (_now, meta) {
-        M.fromPresentedFrame(meta);
+        if (boundVideo !== video) return;
+        M.fromPresentedFrame(meta, video);
         if (boundVideo === video) rvfcHandle = video.requestVideoFrameCallback(onFrame);
       };
       rvfcHandle = video.requestVideoFrameCallback(onFrame);
     }
+    if (videoIsStale(video)) neutralize(videoIsStale(video));
     return M;
   };
 
@@ -431,35 +631,73 @@
     else obj.rotation = { x: 0, y: 0, z: z };
   }
 
+  function isDescendant(node, ancestor) {
+    if (!node || !ancestor) return false;
+    var n = node.parent;
+    var guard = 0;
+    while (n && guard++ < 64) {
+      if (n === ancestor) return true;
+      n = n.parent;
+    }
+    return false;
+  }
+
   M.applyTransforms = function (nodes) {
     nodes = nodes || {};
-    var f = M.sample(nodes.decodedFrame != null ? nodes.decodedFrame : lastI);
+    var offset = nodes.correctionOffset || null;
+    var tracked = nodes.trackedCamera || null;
+    var bike = nodes.bikeVisual || null;
+    var hierarchyForbidden = false;
+    if (bike && (isDescendant(offset, bike) || isDescendant(nodes.cockpitCam, bike) || isDescendant(tracked, bike))) {
+      hierarchyForbidden = true;
+    }
+
+    var f;
+    if (hierarchyForbidden) {
+      f = failFrame(lastI, "HIERARCHY_FORBIDDEN: camera/offset under bikeVisual");
+    } else if (staleReason && !frameFresh) {
+      f = failFrame(-1, staleReason);
+    } else {
+      f = M.sample(nodes.decodedFrame != null ? nodes.decodedFrame : lastI);
+    }
+
     var bodyLean = 0;
     var camCorr = 0;
-    if (M.vehicle !== "plant" && f.status === "OK") {
+    if (!hierarchyForbidden && M.vehicle !== "plant" && f.status === "OK") {
       bodyLean = (f.targetLeanDeg * Math.PI) / 180;
       camCorr = M.view === "chase" ? 0 : (f.appliedCorrectionDeg * Math.PI) / 180;
     }
+
     rz(nodes.vehicleRoot, 0);
-    rz(nodes.bikeVisual, bodyLean);
-    rz(nodes.cockpitCam, camCorr);
-    rz(nodes.chaseCam, 0);
-    if (nodes.chaseCam && nodes.chaseCam.up && nodes.chaseCam.up.set) {
-      nodes.chaseCam.up.set(0, 1, 0);
+    rz(bike, bodyLean);
+    rz(offset, camCorr);
+    rz(nodes.chaseCorrectionOffset, 0);
+    if (nodes.chaseCam && nodes.chaseCam !== tracked) rz(nodes.chaseCam, 0);
+    if (nodes.chaseCam && nodes.chaseCam.up && nodes.chaseCam.up.set) nodes.chaseCam.up.set(0, 1, 0);
+    if (nodes.cowl) rz(nodes.cowl, 0);
+    // Desktop sibling contract: cockpitCam is the correction node only when it is
+    // NOT the tracked headset camera and writeTrackedPose is not requested.
+    if (nodes.cockpitCam && nodes.cockpitCam !== tracked && nodes.writeTrackedPose !== true) {
+      if (!offset) rz(nodes.cockpitCam, camCorr);
     }
-    if (nodes.cowl) {
-      rz(nodes.cowl, 0);
+    // Never write tracked headset pose.
+    if (tracked && nodes.writeTrackedPose === true) {
+      /* still refuse */
     }
+
     return {
-      status: f.status,
+      status: hierarchyForbidden ? "FAIL_CLOSED" : f.status,
       bodyLeanRad: bodyLean,
       cockpitCamRad: camCorr,
       chaseCamRad: 0,
       vehicleRootRad: 0,
+      correctionOffsetRad: camCorr,
+      trackedCameraWritten: false,
+      hierarchyForbidden: hierarchyForbidden,
       worldCockpitIfSibling: camCorr,
       worldCockpitIfChildOfBike: bodyLean + camCorr,
       doubleRoll: bodyLean + camCorr,
-      contract: "cameras are siblings of bikeVisual under vehicleRoot",
+      contract: "correctionOffset sibling of bikeVisual; tracked camera never written",
     };
   };
 
@@ -467,8 +705,8 @@
     return M.applyTransforms({
       vehicleRoot: null,
       bikeVisual: body,
-      cockpitCam: (opts && opts.mode) === "chase" ? null : cam,
-      chaseCam: (opts && opts.mode) === "chase" ? cam : null,
+      correctionOffset: cam,
+      trackedCamera: null,
       decodedFrame: opts && opts.decodedFrame,
     });
   };
@@ -478,51 +716,67 @@
   };
 
   M.selfTest = function () {
-    var fails = [];
-    function eq(name, a, b) {
-      if (Math.abs(a - b) > 1e-9) fails.push(name + " got " + a + " want " + b);
-    }
-    var body = 42.15 * Math.PI / 180;
-    var deficit = 40.86 * Math.PI / 180;
-    eq("sibling cockpit world roll", M.worldRollYXZ(deficit, 0), deficit);
-    eq("WRONG child-of-bike world roll", M.worldRollYXZ(deficit, body), body + deficit);
-    eq("chase world roll", M.worldRollYXZ(0, 0), 0);
-    eq("plant", M.worldRollYXZ(0, 0), 0);
-    if (body + deficit < 1.4) fails.push("expected ~83deg demonstration value missing");
-    var eightyThree = (body + deficit) * 180 / Math.PI;
-    if (Math.abs(eightyThree - 83.01) > 0.1) fails.push("frame258 double-roll demo " + eightyThree);
-    var payload = getPayload();
-    if (payload) {
-      if (payload.leadApplied) fails.push("lead still applied");
-      if (payload.appliedLeadSamples) fails.push("lookahead still present");
-      if (payload.targetLeanDeg && payload.yawRate) {
-        var i = 258;
-        var yr = payload.yawRate[i];
-        var tgt = payload.targetLeanDeg[i];
-        if (isFiniteNumber(yr) && isFiniteNumber(tgt)) {
-          var expect = (Math.atan((24 * yr) / 9.81) * 180) / Math.PI;
-          if (expect > 48) expect = 48;
-          if (expect < -48) expect = -48;
-          if (Math.abs(expect - tgt) > 0.05) fails.push("target still lookahead at 258: " + tgt + " vs " + expect);
-        }
-      }
-    }
-    var saved = {
+    var snap = {
       verified: sourceIdentity.verified,
       sha256: sourceIdentity.sha256,
       frameCount: sourceIdentity.frameCount,
       fps: sourceIdentity.fps,
       durationSec: sourceIdentity.durationSec,
+      reason: sourceIdentity.reason,
+      lastI: lastI,
+      dial: M.dial,
+      vehicle: M.vehicle,
+      view: M.view,
+      frameFresh: frameFresh,
+      staleReason: staleReason,
     };
-    M.setSourceIdentity({ sha256: "deadbeef", frameCount: 1514, fps: 24, durationSec: 63.083333 });
-    var bad = M.sample(258);
-    if (bad.appliedCorrectionDeg !== 0) fails.push("wrong source still applies correction");
-    M.setSourceIdentity(saved.verified ? saved : { sha256: EXPECTED.sha256, frameCount: 1514, fps: 24, durationSec: 63.083333 });
-    var oob = M.sample(1514);
-    if (oob.appliedCorrectionDeg !== 0) fails.push("out of range hold-last");
-    var neg = M.sample(-1);
-    if (neg.appliedCorrectionDeg !== 0) fails.push("negative index hold-last");
-    return { ok: fails.length === 0, fails: fails, doubleRollDegAt258Demo: eightyThree };
+    var fails = [];
+    function eq(name, a, b) {
+      if (Math.abs(a - b) > 1e-9) fails.push(name + " got " + a + " want " + b);
+    }
+    try {
+      var body = 42.15 * Math.PI / 180;
+      var deficit = 40.86 * Math.PI / 180;
+      eq("sibling cockpit world roll", M.worldRollYXZ(deficit, 0), deficit);
+      eq("WRONG child-of-bike world roll", M.worldRollYXZ(deficit, body), body + deficit);
+      eq("chase world roll", M.worldRollYXZ(0, 0), 0);
+      var payload = getPayload();
+      var fixture = { verified: true, sha256: EXPECTED.sha256, frameCount: 1514, fps: 24, durationSec: 63.083333 };
+      var prod = sampleWith(payload, sourceIdentity, 258, 1, "striker", "cockpit");
+      if (snap.verified === false && prod.status === "OK") fails.push("production unverified sample leaked OK");
+      var isolated = sampleWith(payload, fixture, 258, 1, "striker", "cockpit");
+      if (isolated.status !== "OK") fails.push("fixture sample failed: " + isolated.reason);
+      if (isolated.status === "OK" && Math.abs(isolated.targetLeanDeg - 40.459) > 0.02) fails.push("lookahead still in fixture sample");
+      var oob = sampleWith(payload, fixture, 1514, 1, "striker", "cockpit");
+      if (oob.appliedCorrectionDeg !== 0) fails.push("fixture oob not zero");
+      var badId = sampleWith(payload, { verified: false }, 258, 1, "striker", "cockpit");
+      if (badId.appliedCorrectionDeg !== 0) fails.push("unverified fixture applied correction");
+      if (payload && payload.leadApplied) fails.push("lead still applied");
+    } finally {
+      sourceIdentity.verified = snap.verified;
+      sourceIdentity.sha256 = snap.sha256;
+      sourceIdentity.frameCount = snap.frameCount;
+      sourceIdentity.fps = snap.fps;
+      sourceIdentity.durationSec = snap.durationSec;
+      sourceIdentity.reason = snap.reason;
+      M.dial = snap.dial;
+      M.vehicle = snap.vehicle;
+      M.view = snap.view;
+      lastI = snap.lastI;
+      frameFresh = snap.frameFresh;
+      staleReason = snap.staleReason;
+      cockpit.dial = snap.dial;
+    }
+    if (sourceIdentity.verified !== snap.verified) fails.push("selfTest mutated production verified");
+    if (sourceIdentity.sha256 !== snap.sha256) fails.push("selfTest mutated production sha");
+    if (M.dial !== snap.dial) fails.push("selfTest mutated dial");
+    return {
+      ok: fails.length === 0,
+      fails: fails,
+      productionVerifiedAfter: sourceIdentity.verified,
+      productionVerifiedBefore: snap.verified,
+      mutatedProduction: sourceIdentity.verified !== snap.verified,
+    };
   };
 
   M.pushFrame = function (f) {
