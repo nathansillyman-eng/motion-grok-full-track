@@ -1,10 +1,10 @@
 /**
- * LEAN GATE v9-full-r5 — cockpit consumer.
+ * LEAN GATE v9-full-r6 — cockpit consumer.
  * NOT WEAR READY. 4K NOT VALIDATED.
  *
- * Render tick independently grants permission to retain correction.
- * Presented-frame evidence has a monotonic 125 ms freshness lease.
- * Events help but are not the safety boundary.
+ * RVFC mediaTime is the presented-frame timestamp.
+ * Liveness = monotonic 125 ms lease. currentTime is diagnostic only
+ * on the RVFC path (not a second 1/24 s veto).
  */
 (function (root) {
   var EXPECTED = {
@@ -300,7 +300,7 @@
   }
 
   var M = root.MOTION || {};
-  M.version = "v9-full-r5";
+  M.version = "v9-full-r6";
   M.frozen = false;
   M.wearReady = false;
   M.fourKValidated = false;
@@ -505,7 +505,7 @@
       return { ok: false, reason: "source change" };
     }
     var payload = getPayload();
-    if (payload && isFiniteNumber(video.currentTime)) {
+    if (!rvfcExpected && payload && isFiniteNumber(video.currentTime)) {
       var i = Math.round(video.currentTime * payload.sampleRate);
       if (
         i < 0 ||
@@ -536,17 +536,12 @@
   }
 
   /**
-   * Independent render-tick permission. Reads live properties NOW.
+   * RVFC path: lastPresentedMediaTime selects the sample.
+   * Liveness: monotonic lease 125 ms from last successful RVFC.
+   * currentTime is diagnostic only — it must not veto a live presented frame.
    *
-   * Media-clock identity: |currentTime - lastPresentedMediaTime| <= 1/24 s
-   *   still names the displayed frame.
-   *
-   * Alive lease: last successful presented-frame observation must be within
-   *   FRESHNESS_LEASE_MS = 3 * (1000/24) = 125 ms on a monotonic clock.
-   *   Three decoded-frame periods = one expected 24 fps interval + one delayed
-   *   frame + one period of RVFC/rAF scheduling jitter. Not a wall-clock guess
-   *   and not video.currentTime. Repeated render ticks between legitimate
-   *   24 fps callbacks do not expire the lease.
+   * No-RVFC fallback is separate and conservative (currentTime-derived,
+   * labeled, not displayed-frame proof).
    */
   function readTickPermission(video) {
     var live = liveDisqualifiers(video);
@@ -555,12 +550,6 @@
     if (rvfcExpected) {
       if (!isFiniteNumber(lastPresentedMediaTime)) {
         return { ok: false, reason: "no presented-frame evidence" };
-      }
-      if (
-        isFiniteNumber(video.currentTime) &&
-        Math.abs(video.currentTime - lastPresentedMediaTime) > FRAME_PERIOD + 1e-6
-      ) {
-        return { ok: false, reason: "stale presented-frame evidence" };
       }
     }
     if (isFiniteNumber(lastPresentedObservedAt) && nowMs() - lastPresentedObservedAt > FRESHNESS_LEASE_MS) {
@@ -575,7 +564,9 @@
     leaseMs: FRESHNESS_LEASE_MS,
     leaseFrames: 3,
     clock: "monotonic (MOTION.now || performance.now)",
-    rule: "nonzero correction requires live presented-frame evidence: last RVFC (or advancing currentTime fallback) observed within 125ms monotonic. |currentTime-lastPresentedMediaTime|<=1/24s still required. 125ms = 3 decoded-frame periods at 24fps (expected interval + one delayed frame + jitter). Repeat ticks between callbacks do not expire the lease.",
+    rvfcAuthoritative: true,
+    currentTimeVetoOnRvfcPath: false,
+    rule: "RVFC mediaTime selects the sample. Permit while now-lastPresentedObservedAt <= 125ms. Do not veto because currentTime advanced between callbacks. currentTime is diagnostic on the RVFC path. No future-frame prediction from currentTime. Fallback without RVFC is separate, currentTime-derived, labeled, not displayed-frame proof.",
   };
 
   function videoIsStale(video) {

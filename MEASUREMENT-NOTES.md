@@ -1,4 +1,4 @@
-# Measurement notes — v9-full-r5
+# Measurement notes — v9-full-r6
 
 NOT WEAR READY. 4K NOT VALIDATED.
 
@@ -11,25 +11,19 @@ ride.mp4 SHA-256 `4507a5d5f9304b91c149200672c8a468f089a33bb96b10032a523460854838
 
 ride-4k.mp4 is **not** measured in this package.
 
-## Lead
+## Lead / classification
 
-Applied lead = null. No global lead is justified.
+Applied lead = null. FRAUD/PASS stamps are `staleStoredLabel` only.
 
-## Classification
+## Displayed-frame freshness (R6)
 
-Window/turn FRAUD/PASS stamps are `staleStoredLabel` only. Not physical truth.
+RVFC `mediaTime` is the presented-frame timestamp and selects the sample.
 
-## Displayed-frame freshness (R5)
+Liveness lease: last successful RVFC observed within **125 ms** on a monotonic clock (`MOTION.now` || `performance.now`).
 
-Media-clock identity: `|currentTime − lastPresentedMediaTime| ≤ 1/24 s`.
+`video.currentTime` is **not** a 1/24 s veto on the RVFC path. A delayed callback at 44–124 ms keeps the last presented sample. currentTime must not select future frames.
 
-Alive lease: last successful presented-frame observation (RVFC) must be within **125 ms** on a monotonic clock (`MOTION.now` || `performance.now`).
-
-125 ms = 3 decoded-frame periods at 24 fps (expected interval + one delayed frame + scheduling jitter).
-
-Repeat ticks between callbacks do not expire the lease. Frozen currentTime + silent RVFC expire it without events.
-
-Also fail-closed this tick on: unverified identity, src mismatch, `ended`, `seeking`, out-of-range, cancelled RVFC.
+No-RVFC fallback is separate, currentTime-derived, labeled, not displayed-frame proof.
 
 ## Cowl
 

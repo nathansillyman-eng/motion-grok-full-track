@@ -1,7 +1,7 @@
-MOTION-GROK-FULL-TRACK r5
+MOTION-GROK-FULL-TRACK r6
 NOT WEAR READY. 4K NOT VALIDATED.
-Stalled-clock lease: 125ms monotonic presented-frame observation.
-LK arrays not mutated. R4 gates unchanged.
+RVFC mediaTime authoritative. currentTime not a 1/24s veto on RVFC path.
+Lease 125ms monotonic unchanged. LK arrays not mutated.
 
 source ride.mp4 SHA-256:
 4507a5d5f9304b91c149200672c8a468f089a33bb96b10032a52346085483882
@@ -10,17 +10,15 @@ source fps: 24
 source duration: 63.083333
 
 freshness leaseMs: 125
-freshness leaseFrames: 3
-clock: MOTION.now || performance.now
-rule: now - lastPresentedObservedAt <= 125ms AND |currentTime-lastPresentedMediaTime|<=1/24s
+currentTimeVetoOnRvfcPath: false
 status: NOT_WEAR_READY
 fourKValidated: false
 
 contained files (SHA-256  bytes  name):
-6ee0220e9386ab83b6f02b34c88d21745e3e025163e87bc7cfe5da4207bdbbde  261092  v9-full.json
-ff843d97045a1b5d891e00e9f1f431cb1969cd38e9a2a4906e1f17e4570f5903  261398  v9-inline.js
-0a88228a51e9f1b2ab54d44d7ced47b6ab57fe958eabb39cf0734eb54776c6b9  33962  hooks.js
-78219852d09aa9f9f3b2ed5a236773565fa6653d9e36a68d6379e4072117e501  5164  aframe-lean-gate.js
-0f191567d80fcd8b8c82935db1df39104cecf418ce2a702ed095ec7f346ff325  2196  TRANSFORM-CONTRACT.md
-40e9e4c1824d616665f36cdb653a13bea16d032d61d6b6b337aaa25c50a8b7ef  1147  MEASUREMENT-NOTES.md
-74c90b4582bce4b3365e74212b8316cd56a0bacb0f88ad5d556adae221ca70bd  1523  R5-CHANGES.md
+68d2301d957561d8691aa040b6b62c034dbbd3a05d9afdcaf3f553ddee092d1a  261167  v9-full.json
+85c61b625c5a7718f2ff10ca8886cd207760058f745fddc8983371b5736f6d48  261473  v9-inline.js
+bed09274340784a5b75d80a64dcec80aa83c89c7dbf18f03eeeba0711717fe36  33480  hooks.js
+a699335242d3c3f22fa6466270c239dbdf94dcb761066978a2d488a6fe5cd4ce  5164  aframe-lean-gate.js
+5e4b859c642be618e9b79abb1a7a78964e1e761c8f19c2f8e7c3fa2799834a95  2196  TRANSFORM-CONTRACT.md
+e9a50f8dd345efb20839aa93f21fec339baf9bba451d745dc0cee9bf9f2fcf8c  978  MEASUREMENT-NOTES.md
+b67eb731939ecf0e25550289d5eb397ff821e6dfcf3d4f2ab4b6bc5bf945a4db  1164  R6-CHANGES.md
