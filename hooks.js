@@ -1,11 +1,9 @@
 /**
- * LEAN GATE v9-full-r3 — cockpit consumer.
+ * LEAN GATE v9-full-r4 — cockpit consumer.
  * NOT WEAR READY. 4K NOT VALIDATED.
  *
- * selfTest never promotes production sourceIdentity.
- * Invalid/stale displayed-frame evidence => applied correction 0 this frame.
- * Tick consumes M.dial; it does not reset it.
- * Writes correctionOffset only. Never writes tracked headset camera pose.
+ * Render tick independently grants permission to retain correction.
+ * Events help but are not the safety boundary.
  */
 (function (root) {
   var EXPECTED = {
@@ -46,6 +44,10 @@
   var videoListeners = [];
   var frameFresh = false;
   var staleReason = null;
+  var lastPresentedMediaTime = null;
+  var rvfcExpected = false;
+  var rvfcLive = false;
+  var FRAME_PERIOD = 1 / EXPECTED.fps;
 
   function isFiniteNumber(x) {
     return typeof x === "number" && isFinite(x);
@@ -293,7 +295,7 @@
   }
 
   var M = root.MOTION || {};
-  M.version = "v9-full-r3";
+  M.version = "v9-full-r4";
   M.frozen = false;
   M.wearReady = false;
   M.fourKValidated = false;
@@ -486,14 +488,71 @@
     return M.sample(i);
   };
 
+  function liveDisqualifiers(video) {
+    if (!sourceIdentity.verified) {
+      return { ok: false, reason: "source identity not verified" };
+    }
+    if (!video) return { ok: true, unbound: true, reason: "no-video explicit-index path" };
+    if (video.ended === true) return { ok: false, reason: "ended" };
+    if (video.seeking === true) return { ok: false, reason: "seeking" };
+    var src = video.currentSrc || video.src || null;
+    if (boundSrc != null && src !== boundSrc) {
+      return { ok: false, reason: "source change" };
+    }
+    var payload = getPayload();
+    if (payload && isFiniteNumber(video.currentTime)) {
+      var i = Math.round(video.currentTime * payload.sampleRate);
+      if (
+        i < 0 ||
+        i >= payload.sampleCount ||
+        video.currentTime >= EXPECTED.durationSec - 1e-6 ||
+        (isFiniteNumber(video.duration) && video.duration > 0 && video.currentTime >= video.duration - 1e-6)
+      ) {
+        return { ok: false, reason: "track exhaustion" };
+      }
+    }
+    if (rvfcExpected && !rvfcLive) return { ok: false, reason: "RVFC cancelled" };
+    return { ok: true, reason: "live" };
+  }
+
+  /**
+   * Independent render-tick permission. Reads live properties NOW.
+   * Does not require an event or another RVFC.
+   *
+   * Freshness: last presented mediaTime must still name the displayed frame.
+   * Allowed skew = one decoded-frame period (1/24 s). That is the plate's
+   * frame duration, not a wall-clock timeout. If currentTime has moved more
+   * than one frame from the last presented mediaTime, the last evidence is
+   * about a different displayed frame.
+   */
+  function readTickPermission(video) {
+    var live = liveDisqualifiers(video);
+    if (!live.ok) return live;
+    if (!video) return live;
+    if (rvfcExpected) {
+      if (!isFiniteNumber(lastPresentedMediaTime)) {
+        return { ok: false, reason: "no presented-frame evidence" };
+      }
+      if (
+        isFiniteNumber(video.currentTime) &&
+        Math.abs(video.currentTime - lastPresentedMediaTime) > FRAME_PERIOD + 1e-6
+      ) {
+        return { ok: false, reason: "stale presented-frame evidence" };
+      }
+    }
+    return { ok: true, reason: "fresh" };
+  }
+
+  M.readTickPermission = readTickPermission;
+  M.freshness = {
+    framePeriodSec: FRAME_PERIOD,
+    rule: "retain presented-frame evidence only while |currentTime - lastPresentedMediaTime| <= 1/24s (one decoded-frame period). Not a wall-clock timeout.",
+  };
+
   function videoIsStale(video) {
     if (!video) return "no video";
-    if (video.ended) return "ended";
-    if (video.seeking) return "seeking";
-    if (typeof video.currentTime === "number" && video.duration && isFinite(video.duration) && video.currentTime >= video.duration - 1e-6) {
-      return "track exhaustion";
-    }
-    return null;
+    var p = liveDisqualifiers(video);
+    return p.ok ? null : p.reason;
   }
 
   M.fromPresentedFrame = function (meta, video) {
@@ -519,8 +578,10 @@
     }
     lastIndexSource = "rvfc-mediaTime";
     lastIndexLimitation = null;
+    lastPresentedMediaTime = meta.mediaTime;
     frameFresh = true;
     staleReason = null;
+    rvfcLive = true;
     return M.sample(i);
   };
 
@@ -548,6 +609,7 @@
       lastI = -1;
       return failFrame(i, "track exhaustion");
     }
+    lastPresentedMediaTime = video.currentTime;
     frameFresh = true;
     return M.sample(i);
   };
@@ -590,10 +652,19 @@
       } catch (e) {}
     }
     videoListeners = [];
+    if (boundVideo && boundVideo.__leangateOrigCancel) {
+      try {
+        boundVideo.cancelVideoFrameCallback = boundVideo.__leangateOrigCancel;
+        delete boundVideo.__leangateOrigCancel;
+      } catch (e) {}
+    }
     boundVideo = null;
     M._boundVideo = null;
     boundSrc = null;
     rvfcHandle = null;
+    rvfcExpected = false;
+    rvfcLive = false;
+    lastPresentedMediaTime = null;
     frameFresh = false;
     lastI = -1;
     neutralize("video detached");
@@ -608,20 +679,37 @@
     frameFresh = false;
     if (!video) return M;
     boundSrc = video.currentSrc || video.src || null;
+    lastPresentedMediaTime = null;
+    rvfcExpected = false;
+    rvfcLive = false;
     ["ended", "seeking", "seeked", "emptied", "abort", "error", "loadstart"].forEach(function (type) {
       var fn = onVideoEvent(type);
       video.addEventListener(type, fn);
       videoListeners.push({ el: video, type: type, fn: fn });
     });
+    if (typeof video.cancelVideoFrameCallback === "function" && !video.__leangateOrigCancel) {
+      video.__leangateOrigCancel = video.cancelVideoFrameCallback.bind(video);
+      video.cancelVideoFrameCallback = function (h) {
+        rvfcLive = false;
+        rvfcHandle = null;
+        frameFresh = false;
+        staleReason = "RVFC cancelled";
+        return video.__leangateOrigCancel(h);
+      };
+    }
     if (typeof video.requestVideoFrameCallback === "function") {
+      rvfcExpected = true;
       var onFrame = function (_now, meta) {
         if (boundVideo !== video) return;
+        rvfcLive = true;
         M.fromPresentedFrame(meta, video);
-        if (boundVideo === video) rvfcHandle = video.requestVideoFrameCallback(onFrame);
+        if (boundVideo === video && rvfcLive) rvfcHandle = video.requestVideoFrameCallback(onFrame);
       };
       rvfcHandle = video.requestVideoFrameCallback(onFrame);
+      rvfcLive = rvfcHandle != null;
     }
-    if (videoIsStale(video)) neutralize(videoIsStale(video));
+    var nowStale = videoIsStale(video);
+    if (nowStale) neutralize(nowStale);
     return M;
   };
 
@@ -655,10 +743,24 @@
     var f;
     if (hierarchyForbidden) {
       f = failFrame(lastI, "HIERARCHY_FORBIDDEN: camera/offset under bikeVisual");
-    } else if (staleReason && !frameFresh) {
-      f = failFrame(-1, staleReason);
     } else {
-      f = M.sample(nodes.decodedFrame != null ? nodes.decodedFrame : lastI);
+      var video = nodes.video || boundVideo;
+      var perm = readTickPermission(video);
+      if (video && !perm.ok) {
+        if (perm.reason === "source change") {
+          M.revokeSourceIdentity("source change");
+        }
+        frameFresh = false;
+        staleReason = perm.reason;
+        lastI = -1;
+        f = failFrame(-1, perm.reason);
+      } else if (!video) {
+        f = M.sample(nodes.decodedFrame != null ? nodes.decodedFrame : lastI);
+      } else if (rvfcExpected) {
+        f = M.sample(lastI);
+      } else {
+        f = M.fromVideoElement(video);
+      }
     }
 
     var bodyLean = 0;
@@ -729,6 +831,9 @@
       view: M.view,
       frameFresh: frameFresh,
       staleReason: staleReason,
+      lastPresentedMediaTime: lastPresentedMediaTime,
+      rvfcExpected: rvfcExpected,
+      rvfcLive: rvfcLive,
     };
     var fails = [];
     function eq(name, a, b) {
@@ -765,6 +870,9 @@
       lastI = snap.lastI;
       frameFresh = snap.frameFresh;
       staleReason = snap.staleReason;
+      lastPresentedMediaTime = snap.lastPresentedMediaTime;
+      rvfcExpected = snap.rvfcExpected;
+      rvfcLive = snap.rvfcLive;
       cockpit.dial = snap.dial;
     }
     if (sourceIdentity.verified !== snap.verified) fails.push("selfTest mutated production verified");

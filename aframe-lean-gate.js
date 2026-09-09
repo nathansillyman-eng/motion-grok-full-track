@@ -1,5 +1,5 @@
 /**
- * A-Frame consumer for LEAN GATE v9-full-r3.
+ * A-Frame consumer for LEAN GATE v9-full-r4.
  * NOT WEAR READY. 4K NOT VALIDATED.
  *
  * NEVER writes [camera].object3D.rotation (tracked pose stays authoritative).
@@ -118,6 +118,7 @@
         trackedCamera: cam,
         chaseCorrectionOffset: this.data.mode === "chase" ? offset : null,
         writeTrackedPose: false,
+        video: video || undefined,
       });
     },
   });

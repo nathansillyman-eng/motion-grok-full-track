@@ -1,4 +1,4 @@
-# Transform contract — v9-full-r3
+# Transform contract — v9-full-r4
 
 NOT WEAR READY. 4K NOT VALIDATED.
 
@@ -56,3 +56,6 @@ Frame 258 dial 1, siblings: bike 40.459°, correction 39.1671°, chase 0°. Chil
 `lean-gate` writes `[lean-correction]` only. It never assigns `[camera].object3D.rotation.z`.
 `remove()` calls `MOTION.detachVideo()` (cancels RVFC).
 Tick copies `MOTION.dial` into the component readout. It does not call `setDial` from the schema default.
+
+Every tick must re-check live video permission (`ended`, `seeking`, src, RVFC live, freshness ≤ 1/24 s) before retaining a nonzero correctionOffset. Events are not the safety boundary.
+

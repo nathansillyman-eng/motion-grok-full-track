@@ -1,7 +1,7 @@
-# MOTION-GROK-FULL-TRACK r3
+# MOTION-GROK-FULL-TRACK r4
 
 **NOT WEAR READY. 4K NOT VALIDATED.**
 
-LK not rerun. Measured arrays not mutated. Consumer/metadata fixes only.
+Render tick independently re-checks live video state before retaining correction.
 
-**Zip (use this commit, not cached main):** see latest commit raw `MOTION-GROK-FULL-TRACK.zip`.
+**Zip (commit-pinned):** use the commit SHA, not cached `main`.
