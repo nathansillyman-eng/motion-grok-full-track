@@ -1,5 +1,6 @@
-MOTION-GROK-FULL-TRACK
-packaging only — files unmodified from completed measurement
+MOTION-GROK-FULL-TRACK r2
+NOT WEAR READY — Codex re-verifies before Claude.
+LK source analysis NOT regenerated. Derived target/deficit rebaked same-frame.
 
 source ride.mp4 SHA-256:
 4507a5d5f9304b91c149200672c8a468f089a33bb96b10032a52346085483882
@@ -7,8 +8,16 @@ source frames: 1514
 source fps: 24
 source duration: 63.083333
 
+retiredFrozenLeadMs: 127
+retiredLookaheadFrames: 3 (=125 ms)
+appliedLeadMs: null
+globalLeadSupportable: false
+status: NOT_WEAR_READY
+
 contained files (SHA-256  bytes  name):
-9aa594fcae1a7e0d9d88a1fa4ce9224285626f5eee68cad079c2dec1eca0bfd1  211976  v9-full.json
-a027b317d6a9616076b5abb18286434aa909d084fdc8f1a51b31dcd7fa5a35a2  212879  v9-inline.js
-52babfaaf0622d01d0518ec184bca44786af7cad6001c64879642fd712da595d  9232  hooks.js
-dcd7f6be48a599029ee3b1129b4187a7a7bf7f65b5397321d7b959f8a3241924  3115  aframe-lean-gate.js
+57da2e928c9e242ab69a1c9513804cfc49f4b438079b24410df438ce3ab4f714  246589  v9-full.json
+ccfb6c82ed458793f03b06508a3c6d0b7dc077fe04135ca7adbcd6f4cc34085c  246924  v9-inline.js
+e81cfbd953b7153cf772d86fd42b65f2e644ef4491c155f5e41a2b376996d088  18882  hooks.js
+99c03e8ccf401bcd671c3fad4285964f35828313e583ebfe16c7f0f7cd7c9d0d  4253  aframe-lean-gate.js
+28d9bbbcccc9b6d25de03388be57e29250c3fd2e9c0649d46da263890b77395f  2564  TRANSFORM-CONTRACT.md
+830f9134025cd3d8bcc242147c4e79018afc6ee0fd94d16dcf77e7b4dd99cac5  3174  MEASUREMENT-NOTES.md
