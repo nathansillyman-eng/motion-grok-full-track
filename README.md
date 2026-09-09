@@ -1,7 +1,7 @@
-# MOTION-GROK-FULL-TRACK r4
+# MOTION-GROK-FULL-TRACK r5
 
 **NOT WEAR READY. 4K NOT VALIDATED.**
 
-Render tick independently re-checks live video state before retaining correction.
+Stalled-clock lease: 125 ms monotonic presented-frame observation.
 
-**Zip (commit-pinned):** use the commit SHA, not cached `main`.
+Use the commit-pinned zip, not cached main.

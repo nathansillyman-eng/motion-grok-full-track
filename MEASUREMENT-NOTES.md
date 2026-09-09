@@ -1,4 +1,4 @@
-# Measurement notes — v9-full-r4
+# Measurement notes — v9-full-r5
 
 NOT WEAR READY. 4K NOT VALIDATED.
 
@@ -17,15 +17,19 @@ Applied lead = null. No global lead is justified.
 
 ## Classification
 
-Window/turn FRAUD/PASS stamps are `staleStoredLabel` only (declared rule does not reproduce; 80/247 mismatch). Not physical truth.
+Window/turn FRAUD/PASS stamps are `staleStoredLabel` only. Not physical truth.
 
-## Displayed-frame freshness (R4)
+## Displayed-frame freshness (R5)
 
-Render tick reads live video state. It does not assume the last RVFC remains valid.
+Media-clock identity: `|currentTime − lastPresentedMediaTime| ≤ 1/24 s`.
 
-Retain last presented `mediaTime` only while `|currentTime - lastPresentedMediaTime| ≤ 1/24 s` (one decoded-frame period, not a wall-clock timeout).
+Alive lease: last successful presented-frame observation (RVFC) must be within **125 ms** on a monotonic clock (`MOTION.now` || `performance.now`).
 
-Also fail-closed this tick on: unverified identity, src mismatch, `ended`, `seeking`, out-of-range index, cancelled RVFC. Events still help; they are not required.
+125 ms = 3 decoded-frame periods at 24 fps (expected interval + one delayed frame + scheduling jitter).
+
+Repeat ticks between callbacks do not expire the lease. Frozen currentTime + silent RVFC expire it without events.
+
+Also fail-closed this tick on: unverified identity, src mismatch, `ended`, `seeking`, out-of-range, cancelled RVFC.
 
 ## Cowl
 

@@ -1,8 +1,9 @@
 /**
- * LEAN GATE v9-full-r4 — cockpit consumer.
+ * LEAN GATE v9-full-r5 — cockpit consumer.
  * NOT WEAR READY. 4K NOT VALIDATED.
  *
  * Render tick independently grants permission to retain correction.
+ * Presented-frame evidence has a monotonic 125 ms freshness lease.
  * Events help but are not the safety boundary.
  */
 (function (root) {
@@ -45,9 +46,13 @@
   var frameFresh = false;
   var staleReason = null;
   var lastPresentedMediaTime = null;
+  var lastPresentedObservedAt = null;
+  var lastPresentedFrames = null;
+  var presentationGeneration = 0;
   var rvfcExpected = false;
   var rvfcLive = false;
   var FRAME_PERIOD = 1 / EXPECTED.fps;
+  var FRESHNESS_LEASE_MS = 3 * (1000 / EXPECTED.fps);
 
   function isFiniteNumber(x) {
     return typeof x === "number" && isFinite(x);
@@ -295,7 +300,7 @@
   }
 
   var M = root.MOTION || {};
-  M.version = "v9-full-r4";
+  M.version = "v9-full-r5";
   M.frozen = false;
   M.wearReady = false;
   M.fourKValidated = false;
@@ -515,15 +520,33 @@
     return { ok: true, reason: "live" };
   }
 
+  function nowMs() {
+    if (typeof M.now === "function") return M.now();
+    if (typeof performance !== "undefined" && typeof performance.now === "function") return performance.now();
+    return Date.now();
+  }
+
+  function markPresented(mediaTime, presentedFrames) {
+    presentationGeneration += 1;
+    lastPresentedMediaTime = mediaTime;
+    lastPresentedObservedAt = nowMs();
+    if (isFiniteNumber(presentedFrames)) lastPresentedFrames = presentedFrames;
+    M.presentationGeneration = presentationGeneration;
+    M.lastPresentedObservedAt = lastPresentedObservedAt;
+  }
+
   /**
    * Independent render-tick permission. Reads live properties NOW.
-   * Does not require an event or another RVFC.
    *
-   * Freshness: last presented mediaTime must still name the displayed frame.
-   * Allowed skew = one decoded-frame period (1/24 s). That is the plate's
-   * frame duration, not a wall-clock timeout. If currentTime has moved more
-   * than one frame from the last presented mediaTime, the last evidence is
-   * about a different displayed frame.
+   * Media-clock identity: |currentTime - lastPresentedMediaTime| <= 1/24 s
+   *   still names the displayed frame.
+   *
+   * Alive lease: last successful presented-frame observation must be within
+   *   FRESHNESS_LEASE_MS = 3 * (1000/24) = 125 ms on a monotonic clock.
+   *   Three decoded-frame periods = one expected 24 fps interval + one delayed
+   *   frame + one period of RVFC/rAF scheduling jitter. Not a wall-clock guess
+   *   and not video.currentTime. Repeated render ticks between legitimate
+   *   24 fps callbacks do not expire the lease.
    */
   function readTickPermission(video) {
     var live = liveDisqualifiers(video);
@@ -540,13 +563,19 @@
         return { ok: false, reason: "stale presented-frame evidence" };
       }
     }
+    if (isFiniteNumber(lastPresentedObservedAt) && nowMs() - lastPresentedObservedAt > FRESHNESS_LEASE_MS) {
+      return { ok: false, reason: "stalled presented-frame lease" };
+    }
     return { ok: true, reason: "fresh" };
   }
 
   M.readTickPermission = readTickPermission;
   M.freshness = {
     framePeriodSec: FRAME_PERIOD,
-    rule: "retain presented-frame evidence only while |currentTime - lastPresentedMediaTime| <= 1/24s (one decoded-frame period). Not a wall-clock timeout.",
+    leaseMs: FRESHNESS_LEASE_MS,
+    leaseFrames: 3,
+    clock: "monotonic (MOTION.now || performance.now)",
+    rule: "nonzero correction requires live presented-frame evidence: last RVFC (or advancing currentTime fallback) observed within 125ms monotonic. |currentTime-lastPresentedMediaTime|<=1/24s still required. 125ms = 3 decoded-frame periods at 24fps (expected interval + one delayed frame + jitter). Repeat ticks between callbacks do not expire the lease.",
   };
 
   function videoIsStale(video) {
@@ -578,7 +607,7 @@
     }
     lastIndexSource = "rvfc-mediaTime";
     lastIndexLimitation = null;
-    lastPresentedMediaTime = meta.mediaTime;
+    markPresented(meta.mediaTime, meta.presentedFrames);
     frameFresh = true;
     staleReason = null;
     rvfcLive = true;
@@ -609,7 +638,9 @@
       lastI = -1;
       return failFrame(i, "track exhaustion");
     }
-    lastPresentedMediaTime = video.currentTime;
+    if (lastPresentedMediaTime !== video.currentTime) {
+      markPresented(video.currentTime, null);
+    }
     frameFresh = true;
     return M.sample(i);
   };
@@ -665,6 +696,9 @@
     rvfcExpected = false;
     rvfcLive = false;
     lastPresentedMediaTime = null;
+    lastPresentedObservedAt = null;
+    lastPresentedFrames = null;
+    presentationGeneration = 0;
     frameFresh = false;
     lastI = -1;
     neutralize("video detached");
@@ -680,6 +714,9 @@
     if (!video) return M;
     boundSrc = video.currentSrc || video.src || null;
     lastPresentedMediaTime = null;
+    lastPresentedObservedAt = null;
+    lastPresentedFrames = null;
+    presentationGeneration = 0;
     rvfcExpected = false;
     rvfcLive = false;
     ["ended", "seeking", "seeked", "emptied", "abort", "error", "loadstart"].forEach(function (type) {
@@ -832,6 +869,8 @@
       frameFresh: frameFresh,
       staleReason: staleReason,
       lastPresentedMediaTime: lastPresentedMediaTime,
+      lastPresentedObservedAt: lastPresentedObservedAt,
+      presentationGeneration: presentationGeneration,
       rvfcExpected: rvfcExpected,
       rvfcLive: rvfcLive,
     };
@@ -871,6 +910,8 @@
       frameFresh = snap.frameFresh;
       staleReason = snap.staleReason;
       lastPresentedMediaTime = snap.lastPresentedMediaTime;
+      lastPresentedObservedAt = snap.lastPresentedObservedAt;
+      presentationGeneration = snap.presentationGeneration;
       rvfcExpected = snap.rvfcExpected;
       rvfcLive = snap.rvfcLive;
       cockpit.dial = snap.dial;

@@ -1,6 +1,7 @@
-MOTION-GROK-FULL-TRACK r4
+MOTION-GROK-FULL-TRACK r5
 NOT WEAR READY. 4K NOT VALIDATED.
-Surgical stale-frame tick permission. LK arrays not mutated.
+Stalled-clock lease: 125ms monotonic presented-frame observation.
+LK arrays not mutated. R4 gates unchanged.
 
 source ride.mp4 SHA-256:
 4507a5d5f9304b91c149200672c8a468f089a33bb96b10032a52346085483882
@@ -8,15 +9,18 @@ source frames: 1514
 source fps: 24
 source duration: 63.083333
 
-freshness: |currentTime - lastPresentedMediaTime| <= 1/24 s
+freshness leaseMs: 125
+freshness leaseFrames: 3
+clock: MOTION.now || performance.now
+rule: now - lastPresentedObservedAt <= 125ms AND |currentTime-lastPresentedMediaTime|<=1/24s
 status: NOT_WEAR_READY
 fourKValidated: false
 
 contained files (SHA-256  bytes  name):
-94159ad9f7bebd083858d81cfb42ce99ee5021e2c12d93a8581d0c4e11fa4133  260784  v9-full.json
-bb134afd0e8e507992113cb416477c7333d5639f84e3f97bb9a49997e6022daa  261119  v9-inline.js
-647db5d5227219b67ca30ad478094f42bf931840b0529e1d089f5fbaa28c5db9  31999  hooks.js
-4d29c01a573fdba4d8d203f9284bb572c2027c71ff33fcfc446598db1b159599  5164  aframe-lean-gate.js
-6de7ab9ca56e8ce7425560be16ba1c6d2e8425c63babe34a3c60bb0797f1dd89  2196  TRANSFORM-CONTRACT.md
-22b7517b772d44b79e417b19dd70272013a6daa30b1d4832778f06e4c9f59c31  1036  MEASUREMENT-NOTES.md
-5a91279f001f06c05a230f77104e4fb8a48672bac7f67a7fca7eefa97d147943  2040  R4-CHANGES.md
+6ee0220e9386ab83b6f02b34c88d21745e3e025163e87bc7cfe5da4207bdbbde  261092  v9-full.json
+ff843d97045a1b5d891e00e9f1f431cb1969cd38e9a2a4906e1f17e4570f5903  261398  v9-inline.js
+0a88228a51e9f1b2ab54d44d7ced47b6ab57fe958eabb39cf0734eb54776c6b9  33962  hooks.js
+78219852d09aa9f9f3b2ed5a236773565fa6653d9e36a68d6379e4072117e501  5164  aframe-lean-gate.js
+0f191567d80fcd8b8c82935db1df39104cecf418ce2a702ed095ec7f346ff325  2196  TRANSFORM-CONTRACT.md
+40e9e4c1824d616665f36cdb653a13bea16d032d61d6b6b337aaa25c50a8b7ef  1147  MEASUREMENT-NOTES.md
+74c90b4582bce4b3365e74212b8316cd56a0bacb0f88ad5d556adae221ca70bd  1523  R5-CHANGES.md
